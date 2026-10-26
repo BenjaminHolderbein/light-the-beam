@@ -1,3 +1,5 @@
+# systemd unit. Replace YOUR_USER and /path/to/light-the-beam (README → "Run it 24/7"),
+# then: sudo cp light-the-beam.service /etc/systemd/system/
 [Unit]
 Description=Light the beam: purple bulb within a minute of a Kings win
 After=network-online.target
@@ -5,9 +7,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ben
-WorkingDirectory=/home/ben/apps/light-the-beam
-ExecStart=/home/ben/.local/bin/uv run --project /home/ben/apps/light-the-beam python -m src.beam
+User=YOUR_USER
+WorkingDirectory=/path/to/light-the-beam
+ExecStart=/path/to/uv run --project /path/to/light-the-beam python -m src.beam
 Restart=on-failure
 RestartSec=30
 
