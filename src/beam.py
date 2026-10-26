@@ -67,8 +67,9 @@ def fire_trigger():
     try:
         req = urllib.request.Request(os.environ["TRIGGER_URL"], headers={"User-Agent": "light-the-beam/0.1"})
         with urllib.request.urlopen(req, timeout=15) as r:
-            body = r.read().decode(errors="replace")[:300]
-            return r.status == 200 and "error" not in body.lower(), body
+            body = r.read().decode(errors="replace")
+        status = json.loads(body).get("URLRoutineTrigger", {}).get("triggerActivationStatus")
+        return status == "success", status or body[:300]
     except Exception as e:
         return False, str(e)
 
