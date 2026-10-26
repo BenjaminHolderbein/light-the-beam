@@ -62,16 +62,25 @@ def ntfy(msg, title=None, priority="default", tags="purple_heart"):
         log.error("ntfy failed: %s", e)
 
 
-def fire_trigger():
+def debug(msg):
+    """ntfy only when NTFY_DEBUG is on (set it in .env)."""
+    if os.environ.get("NTFY_DEBUG", "").lower() in ("1", "true", "yes", "on"):
+        ntfy(msg, title="beam debug", priority="low", tags="mag")
+
+
+def fire_trigger(reason="manual"):
     """Hit the Virtual Smart Home URL. Returns (ok, detail)."""
+    t0 = time.monotonic()
     try:
         req = urllib.request.Request(os.environ["TRIGGER_URL"], headers={"User-Agent": "light-the-beam/0.1"})
         with urllib.request.urlopen(req, timeout=15) as r:
             body = r.read().decode(errors="replace")
         status = json.loads(body).get("URLRoutineTrigger", {}).get("triggerActivationStatus")
-        return status == "success", status or body[:300]
+        ok, detail = status == "success", status or body[:300]
     except Exception as e:
-        return False, str(e)
+        ok, detail = False, str(e)
+    debug(f"Trigger fired ({reason}): {'OK' if ok else 'FAILED'} · {detail} · {time.monotonic() - t0:.1f}s")
+    return ok, detail
 
 
 def load_state():
@@ -157,7 +166,7 @@ def buzzer_wallclock(event_id):
 
 def light_the_beam(event_id, g, late=False):
     fired_at = datetime.now(timezone.utc)
-    ok, detail = fire_trigger()
+    ok, detail = fire_trigger(reason=f"{g['name']} {g['us']}–{g['them']}, {g['detail']}")
     score = f"{g['us']}–{g['them']}"
     log.info("fire %s (%s %s): ok=%s %s", event_id, g["name"], score, ok, detail)
     if not ok:
@@ -178,6 +187,7 @@ def run(team):
     alerted = False
     last_heartbeat = datetime.min.replace(tzinfo=timezone.utc)
     first_pass = True
+    watching = None
     while True:
         now = datetime.now(timezone.utc)
         try:
@@ -199,6 +209,9 @@ def run(team):
                 time.sleep(wait)
                 continue
             g = game_status(event_id, start, team)
+            if event_id != watching:
+                watching = event_id
+                debug(f"Watching {g['name']} live ({g['detail']}), polling every {LIVE_POLL}s")
             fails = 0
             if alerted:
                 ntfy("ESPN reachable again.", title="beam watcher recovered", tags="white_check_mark")
@@ -207,6 +220,7 @@ def run(team):
             if v:
                 # A game that was already final when we started is a catch-up after a reboot.
                 late = first_pass and g["state"] == "post"
+                debug(f"{g['name']}: {v} {g['us']}–{g['them']} ({g['detail']}){' [catch-up]' if late else ''}")
                 if v == "win":
                     light_the_beam(event_id, g, late=late)
                 else:

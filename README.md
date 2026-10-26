@@ -11,6 +11,8 @@ After every Sacramento Kings win, turn a bulb Kings purple — within about a mi
 - **Alerts (ntfy):** a win notification that includes the measured buzzer→beam lag (from ESPN
   play-by-play wallclock), loud alerts on trigger failure or sustained ESPN outages, and a
   silent daily heartbeat.
+- **Debug:** `NTFY_DEBUG=1` in `.env` adds low-priority ntfys for every trigger fire (status +
+  call time), live-watch start, and each game verdict.
 - **State:** `state.json` records handled game IDs, so each game fires once, even across reboots.
   A game that finished while couch was down still fires if tipoff was <3.5h ago.
 
