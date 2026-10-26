@@ -1,0 +1,6 @@
+[project]
+name = "light-the-beam"
+version = "0.1.0"
+description = "Turn a bulb Kings purple within a minute of every Sacramento Kings win"
+requires-python = ">=3.11"
+dependencies = []

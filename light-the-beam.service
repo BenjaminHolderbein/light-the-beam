@@ -1,0 +1,15 @@
+[Unit]
+Description=Light the beam: purple bulb within a minute of a Kings win
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ben
+WorkingDirectory=/home/ben/apps/light-the-beam
+ExecStart=/home/ben/.local/bin/uv run --project /home/ben/apps/light-the-beam python -m src.beam
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
