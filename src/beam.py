@@ -1,4 +1,4 @@
-"""Light the beam: fire an Alexa routine (via Virtual Smart Home) within ~a minute of a Kings win.
+"""Light the beam: turn a bulb Kings purple within ~a minute of a Kings win.
 
 Idle between games, poll ESPN's scoreboard every 15s from just before tipoff, and fire the
 trigger the moment the 4th quarter (or an OT) ends with the Kings ahead -- a game can't end
@@ -14,6 +14,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from . import lights
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_FILE = ROOT / "state.json"
@@ -69,18 +71,74 @@ def debug(msg):
 
 
 def fire_trigger(reason="manual"):
-    """Hit the Virtual Smart Home URL. Returns (ok, detail)."""
-    t0 = time.monotonic()
-    try:
-        req = urllib.request.Request(os.environ["TRIGGER_URL"], headers={"User-Agent": "light-the-beam/0.1"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            body = r.read().decode(errors="replace")
-        status = json.loads(body).get("URLRoutineTrigger", {}).get("triggerActivationStatus")
-        ok, detail = status == "success", status or body[:300]
-    except Exception as e:
-        ok, detail = False, str(e)
-    debug(f"Trigger fired ({reason}): {'OK' if ok else 'FAILED'} · {detail} · {time.monotonic() - t0:.1f}s")
+    """Light the beam through whichever backend this install uses. (ok, detail)."""
+    ok, detail = lights.fire(reason)
+    debug(f"Trigger fired ({reason}): {'OK' if ok else 'FAILED'} · {detail}")
     return ok, detail
+
+
+def update_env(values):
+    """Upsert keys in .env, leaving every other line (and TRIGGER_URL) alone."""
+    env = ROOT / ".env"
+    lines = env.read_text().splitlines() if env.exists() else []
+    remaining = dict(values)
+    out = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if "=" in line and not line.strip().startswith("#") else None
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+    out.extend(f"{k}={v}" for k, v in remaining.items())
+    env.write_text("\n".join(out).strip() + "\n")
+    env.chmod(0o600)  # it holds the bridge key
+    return env
+
+
+def pair_hue(ip):
+    """One-time Hue setup: mint an application key and write it to .env."""
+    try:
+        key, fingerprint = lights.pair(ip)
+    except lights.LightError as e:
+        print(f"Pairing failed: {e}")
+        return 1
+    update_env({
+        "LIGHT_BACKEND": "hue",
+        "HUE_BRIDGE": ip,
+        "HUE_KEY": key,
+        "HUE_CERT_SHA256": fingerprint,
+    })
+    print(f"Paired with the bridge at {ip}. Key and certificate fingerprint written to .env.")
+    os.environ.update({"HUE_BRIDGE": ip, "HUE_KEY": key, "HUE_CERT_SHA256": fingerprint})
+    return show_hue_lights(after_pairing=True)
+
+
+def show_hue_lights(after_pairing=False):
+    """List what the bridge can see, and the HUE_TARGETS line to paste."""
+    ip, key = os.environ.get("HUE_BRIDGE"), os.environ.get("HUE_KEY")
+    if not ip or not key:
+        print("Not paired yet. Run: python -m src.beam --pair-hue <bridge-ip>")
+        return 1
+    try:
+        inv = lights.inventory(ip, key)
+    except lights.LightError as e:
+        print(f"Could not read the bridge: {e}")
+        return 1
+    if inv["groups"]:
+        print("\nRooms and zones (one call lights the whole thing at once):")
+        for name in sorted(inv["groups"]):
+            print(f"  {name}")
+    print("\nIndividual lights:")
+    for name in sorted(inv["lights"]):
+        print(f"  {name}{'' if inv['colour'].get(name, True) else '   (no colour, dims only)'}")
+    current = os.environ.get("HUE_TARGETS", "")
+    print(f"\nPut the ones you want in .env, comma separated, for example:\n"
+          f"  HUE_TARGETS={sorted(inv['groups'])[0] if inv['groups'] else (sorted(inv['lights'])[0] if inv['lights'] else 'Living room')}")
+    if current:
+        print(f"\nCurrently set to: {current}")
+    elif after_pairing:
+        print("\nThat's the last step. Then: python -m src.beam --test-trigger")
+    return 0
 
 
 def load_state():
@@ -245,12 +303,20 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--check", metavar="EVENT_ID", help="dry run: show status/verdict for one game, fire nothing")
     p.add_argument("--test-trigger", action="store_true", help="fire the trigger once now")
+    p.add_argument("--pair-hue", metavar="BRIDGE_IP",
+                   help="pair with a Hue bridge: press its link button, then run this")
+    p.add_argument("--hue-lights", action="store_true",
+                   help="list the rooms, zones and lights the paired bridge can see")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s")
     load_env()
     team = os.environ.get("TEAM", "SAC")
+    if args.pair_hue:
+        return pair_hue(args.pair_hue)
+    if args.hue_lights:
+        return show_hue_lights()
     if args.test_trigger:
         print(fire_trigger())
     elif args.check:
@@ -258,6 +324,13 @@ def main():
         g = game_status(args.check, start, team)
         print(json.dumps(g, indent=2), "\nverdict:", verdict(g), "\nbuzzer wallclock:", buzzer_wallclock(args.check))
     else:
+        try:
+            log.info("lighting: %s", lights.check_config())
+        except lights.LightError as e:
+            # Fail here rather than discovering it at the buzzer in April.
+            log.error("lighting is not configured: %s", e)
+            ntfy(f"Not starting: {e}", title="beam config broken", priority="high", tags="warning")
+            return 1
         run(team)
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "light-the-beam"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn a smart bulb Kings purple within a minute of every Sacramento Kings win"
 readme = "README.md"
 license = "MIT"
