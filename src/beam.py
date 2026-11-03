@@ -49,17 +49,39 @@ def get_json(url):
         return json.load(r)
 
 
+#: ntfy's JSON priorities. The header API takes these names; the JSON API
+#: takes the numbers.
+PRIORITIES = {"min": 1, "low": 2, "default": 3, "high": 4, "urgent": 5, "max": 5}
+
+
 def ntfy(msg, title=None, priority="default", tags="purple_heart"):
+    """Push a notification, via ntfy's JSON endpoint.
+
+    JSON rather than the X-Title/X-Priority headers, because HTTP headers are
+    latin-1 and the win notification's title starts with a purple heart. That
+    raised UnicodeEncodeError inside the send, which ntfy() caught and logged,
+    so the beam lit and the phone stayed quiet. It failed on the Kings' win on
+    2026-11-02 and would have failed on every win. The body was always fine,
+    which is why nothing looked wrong until a win happened.
+    """
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         log.warning("no NTFY_TOPIC; would have sent: %s", msg)
         return
-    headers = {"Priority": priority, "Tags": tags}
+    body = {
+        "topic": topic,
+        "message": msg,
+        "priority": PRIORITIES.get(priority, 3),
+        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+    }
     if title:
-        headers["Title"] = title
-    url = f"{os.environ.get('NTFY_SERVER', 'https://ntfy.sh')}/{topic}"
+        body["title"] = title
+    url = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
     try:
-        urllib.request.urlopen(urllib.request.Request(url, data=msg.encode(), headers=headers), timeout=10)
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=10)
     except Exception as e:
         log.error("ntfy failed: %s", e)
 

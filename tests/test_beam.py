@@ -1,5 +1,8 @@
+import json
 import unittest
+from unittest import mock
 
+from src import beam
 from src.beam import parse_status, verdict
 
 
@@ -56,3 +59,45 @@ class Verdict(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Notifications(unittest.TestCase):
+    """The win notification's title starts with 💜, which cannot go in an HTTP
+    header. It raised inside ntfy(), got caught and logged, and the Kings' win
+    on 2026-11-02 lit the beam and never reached Ben's phone."""
+
+    def send(self, **kw):
+        sent = {}
+
+        def urlopen(req, timeout=None):
+            sent["url"] = req.full_url
+            sent["body"] = json.loads(req.data.decode())
+            sent["headers"] = req.headers
+            return mock.MagicMock(__enter__=mock.MagicMock(), __exit__=mock.MagicMock())
+
+        with mock.patch.dict("os.environ", {"NTFY_TOPIC": "t"}, clear=True), \
+                mock.patch("src.beam.urllib.request.urlopen", urlopen):
+            beam.ntfy(**kw)
+        return sent
+
+    def test_an_emoji_title_survives(self):
+        sent = self.send(msg="Kings beat DAL 115–100", title="💜 Light the beam!")
+        self.assertEqual(sent["body"]["title"], "💜 Light the beam!")
+        self.assertEqual(sent["body"]["message"], "Kings beat DAL 115–100")
+
+    def test_priority_names_become_numbers(self):
+        self.assertEqual(self.send(msg="x", priority="high")["body"]["priority"], 4)
+        self.assertEqual(self.send(msg="x", priority="min")["body"]["priority"], 1)
+        # An unknown name must not become a crash or a silent urgent.
+        self.assertEqual(self.send(msg="x", priority="whatever")["body"]["priority"], 3)
+
+    def test_tags_become_a_list(self):
+        self.assertEqual(self.send(msg="x", tags="warning, mag")["body"]["tags"],
+                         ["warning", "mag"])
+
+    def test_no_topic_means_no_request(self):
+        with mock.patch.dict("os.environ", {}, clear=True), \
+                mock.patch("src.beam.urllib.request.urlopen") as urlopen, \
+                self.assertLogs("beam", level="WARNING"):
+            beam.ntfy("nobody is listening")
+        urlopen.assert_not_called()
